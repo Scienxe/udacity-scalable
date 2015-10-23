@@ -2,7 +2,7 @@
 
 ## Setup:
 
-1. Create a new project in the Google Developers console
+1. Create a new project in the Google Developers console if remote deployment is desired
 1. Enter the name of the new project in `app.yaml` as `application:`
 1. Generate a client ID from the Google Developers console
 2. Paste the new ID in `settings.py` as `WEB\_CLIENT\_ID`
