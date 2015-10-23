@@ -55,6 +55,8 @@ API_EXPLORER_CLIENT_ID = endpoints.API_EXPLORER_CLIENT_ID
 MEMCACHE_ANNOUNCEMENTS_KEY = "RECENT_ANNOUNCEMENTS"
 ANNOUNCEMENT_TPL = ('Last chance to attend! The following conferences '
                     'are nearly sold out: %s')
+MEMCACHE_FEAT_SPKR_KEY = "FEATURED_SPEAKER%s"
+FEAT_SPKR_ANNOUNCE = "Check out featured speaker {0}, presenting {1}"
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 DEFAULTS = {
@@ -471,21 +473,48 @@ class ConferenceApi(remote.Service):
         return announcement
 
 
-    @endpoints.method(message_types.VoidMessage, StringMessage,
-            path='conference/announcement/get',
-            http_method='GET', name='getAnnouncement')
+    @endpoints.method(message_types.VoidMessage, 
+            StringMessage,
+            path = 'conference/announcement/get',
+            http_method = 'GET', 
+            name = 'getAnnouncement')
     def getAnnouncement(self, request):
         """Return Announcement from memcache."""
-        return StringMessage(data=memcache.get(MEMCACHE_ANNOUNCEMENTS_KEY) or "")
+        return StringMessage(data = memcache.get(MEMCACHE_ANNOUNCEMENTS_KEY) or "")
 
 
     @staticmethod
-    def _cacheFeaturedSpeaker():
-        pass
+    def _cacheFeaturedSpeaker(conf, spkr):
+        """Given websafe conf key and websafe spkr key, set featured
+            speaker if speaker has more than one session at the conference."""
+        c_key = ndb.Key(urlsafe = conf)
+        sessions = Session.query(Session.speaker == spkr, 
+                    ancestor = ndb.Key(c_key.kind(), c_key.id())) \
+                    .order(Session.date) \
+                    .order(Session.startTime)
+        s_key = ndb.Key(urlsafe = spkr)
+        speaker = s_key.get()
+
+        if sessions:
+            feat_speaker = FEAT_SPKR_ANNOUNCE.format(speaker.name, 
+                ', '.join([sess.name for sess in sessions]))
+            memcache.set(MEMCACHE_FEAT_SPKR_KEY % (conf), feat_speaker)
+        else:
+            feat_speaker = ""
+        
+        return feat_speaker
 
 
-    def getFeaturedSpeaker():
-        pass
+    @endpoints.method(CONF_POST_REQUEST, 
+            StringMessage,
+            path = 'conference/{websafeConferenceKey}/featuredspeaker/get',
+            http_method = 'POST',
+            name = 'getFeaturedSpeaker')
+    def getFeaturedSpeaker(self, request):
+        """Return featured speaker for specified conference."""
+        return StringMessage(data = memcache.get(MEMCACHE_FEAT_SPKR_KEY % 
+            (request.websafeConferenceKey)) or "")
+
 
 # - - - Registration - - - - - - - - - - - - - - - - - - - -
 
@@ -658,8 +687,10 @@ class ConferenceApi(remote.Service):
             data['speaker'] = Speaker(name = request.speaker).put().urlsafe()
         else:
             data['speaker'] = speaker.key.urlsafe()
-            # TODO: set featured speaker
-            pass
+            
+            taskqueue.add(params = {'speaker': data['speaker'],
+                'conf': conf.key.urlsafe()},
+                url='/tasks/set_featured_speaker')
 
         # convert dates from strings to Date objects
         if data['date']:
@@ -723,28 +754,14 @@ class ConferenceApi(remote.Service):
             name = 'getSessionsBySpeaker')
     def getSessionsBySpeaker(self, request):
         """Return sessions with the specified speaker."""
-        sessions = Session.query(Session.speaker == request.websafeSpeakerKey)
+        sessions = self._getSessionsBySpeaker(request.websafeSpeakerKey)
 
         return SessionForms(items = [self._copySessionToForm(sess) for sess in sessions])
 
 
-    def _sessionQuery(self, request):
-        q = Session.query()
-        inequality_filter, filters = self._formatFilters(request.filters)
-
-        # If exists, sort on inequality filter first
-        if not inequality_filter:
-            q = q.order(Session.startTime)
-        else:
-            q = q.order(ndb.GenericProperty(inequality_filter))
-            q = q.order(session.startTime)
-
-        for filtr in filters:
-            if filtr["field"] in ["month", "maxAttendees"]:
-                filtr["value"] = int(filtr["value"])
-            formatted_query = ndb.query.FilterNode(filtr["field"], filtr["operator"], filtr["value"])
-            q = q.filter(formatted_query)
-        return q
+    def _getSessionsBySpeaker(self, websafeKey):
+        """Return a list of all sessions with specified speaker."""
+        return Session.query(Session.speaker == websafeKey)
 
 
     @endpoints.method(SESS_POST_REQUEST, 
@@ -831,9 +848,38 @@ class ConferenceApi(remote.Service):
         return SessionForms(items = [self._copySessionToForm(sess) for sess in sessions])
 
 
-    def getFeaturedSpeaker():
-        pass
+    @endpoints.method(message_types.VoidMessage,
+            StringMessage,
+            path = 'speakers/prolific',
+            http_method = 'POST',
+            name = 'getProlificSpeakers')
+    def getProlificSpeakers(self, request):
+        """Return a list of speakers giving sessions at more than one conference."""
+        prolific = set()
+        speakers = Speaker.query()
+        s_keys = [spkr.key for spkr in speakers]
         
+        for s_key in s_keys:
+            sessions = self._getSessionsBySpeaker(s_key.urlsafe())
+            confs = set(sess.key.parent() for sess in sessions)
+            if len(confs) > 1:
+                prolific.add(s_key.get().name)
+                continue
+        
+        return StringMessage(data = repr(prolific))
+
+
+    @endpoints.method(message_types.VoidMessage,
+            SessionForms,
+            path = 'sessions/nonworkshop/before1900',
+            http_method = 'POST',
+            name = 'getNonWorkshopsPre1900')
+    def getNonWorkshopsPre1900(self, request):
+        sessions = Session.query(Session.startTime < 1900).order(Session.startTime)
+        
+        return SessionForms(items = [self._copySessionToForm(sess) for sess in sessions 
+                if sess.typeOfSession != "workshop"])
+
 
 api = endpoints.api_server([ConferenceApi]) # register API
 
@@ -841,4 +887,3 @@ api = endpoints.api_server([ConferenceApi]) # register API
 
 
 # ahRkZXZ-dWRhY2l0eS1zY2FsYWJsZXIuCxIHUHJvZmlsZSIRdG1hbmdhbkBnbWFpbC5jb20MCxIKQ29uZmVyZW5jZRgBDA
-# ahRkZXZ-dWRhY2l0eS1zY2FsYWJsZXIeCxIKQ29uZmVyZW5jZRgBDAsSB1Nlc3Npb24YvhcM -- wishlist 3 session
