@@ -489,8 +489,7 @@ class ConferenceApi(remote.Service):
             speaker if speaker has more than one session at the conference."""
         c_key = ndb.Key(urlsafe = conf)
         s_key = ndb.Key(urlsafe = spkr)
-        sessions = Session.query(Session.speaker == s_key, 
-                    ancestor = ndb.Key(urlsafe = conf)) \
+        sessions = Session.query(Session.speaker == s_key, ancestor = c_key) \
                     .order(Session.date) \
                     .order(Session.startTime)
 
@@ -681,17 +680,15 @@ class ConferenceApi(remote.Service):
         del data['websafeKey']
 
         speaker = Speaker.query(Speaker.name == request.speaker).get()
+        check_featured = False
         if not speaker:
             spkr_id = Speaker.allocate_ids(size = 1)[0]
             spkr_key = ndb.Key(Speaker, spkr_id)
             data['speaker'] = Speaker(name = request.speaker).put()
         else:
             data['speaker'] = speaker.key
+            check_featured = True
             
-            taskqueue.add(params = {'speaker': speaker.key.urlsafe(),
-                'conf': conf.key.urlsafe()},
-                url='/tasks/set_featured_speaker')
-
         # convert dates from strings to Date objects
         if data['date']:
             data['date'] = datetime.strptime(data['date'][:10], "%Y-%m-%d").date()
@@ -705,6 +702,15 @@ class ConferenceApi(remote.Service):
 
         # create Session
         Session(**data).put()
+
+        if check_featured:
+            # The method that checks whether to feature a speaker uses an ancestor
+            # query, which should guarantee strong consistency. Adding the push
+            # task after the put() guarantees the new session will show up in that
+            # query.
+            taskqueue.add(params = {'speaker': speaker.key.urlsafe(),
+                'conf': conf.key.urlsafe()},
+                url='/tasks/set_featured_speaker')
         
         sess = s_key.get()
         return self._copySessionToForm(sess)
@@ -890,7 +896,3 @@ class ConferenceApi(remote.Service):
 
 api = endpoints.api_server([ConferenceApi]) # register API
 
-
-
-
-# ahRkZXZ-dWRhY2l0eS1zY2FsYWJsZXIwCxIHUHJvZmlsZSIRdG1hbmdhbkBnbWFpbC5jb20MCxIKQ29uZmVyZW5jZRj50gEM
