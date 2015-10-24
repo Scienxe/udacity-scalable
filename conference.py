@@ -763,14 +763,9 @@ class ConferenceApi(remote.Service):
     def getSessionsBySpeaker(self, request):
         """Return sessions with the specified speaker."""
         s_key = ndb.Key(urlsafe = request.websafeSpeakerKey)
-        sessions = self._getSessionsBySpeaker(s_key)
+        sessions = Session.query(Session.speaker == s_key)
 
         return SessionForms(items = [self._copySessionToForm(sess) for sess in sessions])
-
-
-    def _getSessionsBySpeaker(self, s_key):
-        """Return a list of all sessions with specified speaker."""
-        return Session.query(Session.speaker == s_key)
 
 
     @endpoints.method(SESS_POST_REQUEST, 
@@ -802,7 +797,7 @@ class ConferenceApi(remote.Service):
         """Return a list of all speakers."""
         speakers = Speaker.query()
         
-        return SpeakerForms(items = [self._copySpeakerToForm(spkr) for spkr in speakers])
+        return SpeakerForms(items = [self._copySpeakerToForm(speaker) for speaker in speakers])
 
 
     @endpoints.method(StringMessage,
@@ -866,7 +861,7 @@ class ConferenceApi(remote.Service):
         s_keys = [spkr.key for spkr in speakers]
         
         for s_key in s_keys:
-            sessions = self._getSessionsBySpeaker(s_key)
+            sessions = Session.query(Session.speaker == s_key)
             
             # loop through sessions and add each one's conference to confs
             # set prevents duplicates
