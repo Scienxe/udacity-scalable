@@ -29,6 +29,10 @@ that SessionForm also carries a `websafeKey` for the session for easy retrieval 
 a `getSpeakers()` endpoint which returns a list of all speakers, including their `websafeKey`s.
 
 ### Design choices:
+The specified data model for a Session is implemented as required, though I wouldn't have split `date` and `startTime` into separate fields when there's a perfectly good `DateTimeProperty()` available.
+
+Since `startTime` was specified in the instructions, I chose to implement it as an `IntegerProperty()`. It's not really being used as a time, merely as an ordering index, much like `month` in the `Conference` model (also not necessary, if I were designing the model). Since the only thing we're doing with `startTime` is asking "is one greater than the other", making it an integer suffices, and saves conversions during the `copyToForm` step.
+
 I chose to implement the speaker as an entity rather than a string. This has a number of advantages.
 Most importantly, the entity can simply carry more information. The current implementation only has the speaker name, but it would also be useful to include fields for email, specialty, fee, etc. 
 
@@ -59,6 +63,5 @@ Query problem: Finding non-workshop sessions before 7pm presents a difficulty as
 
 ## Task 4:
 
-During session creation, the app checks to see if the speaker is already in the DataStore. If not, it adds the speaker. If they're already there, the app sends a task to the taskqueue which will asynchronously perform the queries to determine if the speaker has more than one session at the conference, and thus should be featured. If so, the app adds a promotion string to memcache under a key containing the `websafeConferenceKey`. This string lists the speaker name and their session names.
-
+During session creation, the app checks to see if the speaker is already in the DataStore. (In production, this check would need to be much more robust, perhaps offering a choice if two speakers have the same name.) If the speaker doesn't exist yet, they get added. If they're already there, the app sends a task to the taskqueue which will asynchronously perform the queries to determine if the speaker has more than one session at the conference, and thus should be featured. If so, the app adds a promotion string to memcache under a key containing the `websafeConferenceKey`. This string lists the speaker name and their session names.
 

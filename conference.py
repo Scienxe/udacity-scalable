@@ -485,14 +485,15 @@ class ConferenceApi(remote.Service):
 
     @staticmethod
     def _cacheFeaturedSpeaker(conf, spkr):
-        """Given websafe conf key and websafe spkr key, set featured
+        """Given speaker key and websafe conf key, set featured
             speaker if speaker has more than one session at the conference."""
         c_key = ndb.Key(urlsafe = conf)
-        sessions = Session.query(Session.speaker == spkr, 
+        s_key = ndb.Key(urlsafe = spkr)
+        sessions = Session.query(Session.speaker == s_key, 
                     ancestor = ndb.Key(c_key.kind(), c_key.id())) \
                     .order(Session.date) \
                     .order(Session.startTime)
-        s_key = ndb.Key(urlsafe = spkr)
+
         speaker = s_key.get()
 
         if sessions:
@@ -501,8 +502,6 @@ class ConferenceApi(remote.Service):
             memcache.set(MEMCACHE_FEAT_SPKR_KEY % (conf), feat_speaker)
         else:
             feat_speaker = ""
-        
-        return feat_speaker
 
 
     @endpoints.method(CONF_POST_REQUEST, 
@@ -641,7 +640,7 @@ class ConferenceApi(remote.Service):
         for field in sf.all_fields():
             if hasattr(sess, field.name):
                 # convert Date to date string; just copy others
-                if field.name == 'date':
+                if field.name == 'date' or field.name == 'speaker':
                     setattr(sf, field.name, str(getattr(sess, field.name)))
                 else:
                     setattr(sf, field.name, getattr(sess, field.name))
@@ -684,11 +683,11 @@ class ConferenceApi(remote.Service):
         if not speaker:
             spkr_id = Speaker.allocate_ids(size = 1)[0]
             spkr_key = ndb.Key(Speaker, spkr_id)
-            data['speaker'] = Speaker(name = request.speaker).put().urlsafe()
+            data['speaker'] = Speaker(name = request.speaker).put()
         else:
-            data['speaker'] = speaker.key.urlsafe()
+            data['speaker'] = speaker.key
             
-            taskqueue.add(params = {'speaker': data['speaker'],
+            taskqueue.add(params = {'speaker': speaker.key.urlsafe(),
                 'conf': conf.key.urlsafe()},
                 url='/tasks/set_featured_speaker')
 
@@ -754,14 +753,15 @@ class ConferenceApi(remote.Service):
             name = 'getSessionsBySpeaker')
     def getSessionsBySpeaker(self, request):
         """Return sessions with the specified speaker."""
-        sessions = self._getSessionsBySpeaker(request.websafeSpeakerKey)
+        s_key = request.websafeSpeakerKey.key()
+        sessions = self._getSessionsBySpeaker(s_key)
 
         return SessionForms(items = [self._copySessionToForm(sess) for sess in sessions])
 
 
-    def _getSessionsBySpeaker(self, websafeKey):
+    def _getSessionsBySpeaker(self, s_key):
         """Return a list of all sessions with specified speaker."""
-        return Session.query(Session.speaker == websafeKey)
+        return Session.query(Session.speaker == s_key)
 
 
     @endpoints.method(SESS_POST_REQUEST, 
@@ -860,7 +860,7 @@ class ConferenceApi(remote.Service):
         s_keys = [spkr.key for spkr in speakers]
         
         for s_key in s_keys:
-            sessions = self._getSessionsBySpeaker(s_key.urlsafe())
+            sessions = self._getSessionsBySpeaker(s_key)
             confs = set(sess.key.parent() for sess in sessions)
             if len(confs) > 1:
                 prolific.add(s_key.get().name)
@@ -875,6 +875,7 @@ class ConferenceApi(remote.Service):
             http_method = 'POST',
             name = 'getNonWorkshopsPre1900')
     def getNonWorkshopsPre1900(self, request):
+        """Return sessions before 7pm which are not workshops."""
         sessions = Session.query(Session.startTime < 1900).order(Session.startTime)
         
         return SessionForms(items = [self._copySessionToForm(sess) for sess in sessions 

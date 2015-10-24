@@ -114,7 +114,7 @@ class Session(ndb.Model):
     """Session db object"""
     name            = ndb.StringProperty(required = True)
     highlights      = ndb.StringProperty()
-    speaker         = ndb.StringProperty()
+    speaker         = ndb.KeyProperty(kind = "Speaker")
     duration        = ndb.IntegerProperty()
     typeOfSession   = ndb.StringProperty()
     date            = ndb.DateProperty()
