@@ -490,15 +490,16 @@ class ConferenceApi(remote.Service):
         c_key = ndb.Key(urlsafe = conf)
         s_key = ndb.Key(urlsafe = spkr)
         sessions = Session.query(Session.speaker == s_key, 
-                    ancestor = ndb.Key(c_key.kind(), c_key.id())) \
+                    ancestor = ndb.Key(urlsafe = conf)) \
                     .order(Session.date) \
                     .order(Session.startTime)
 
         speaker = s_key.get()
 
-        if sessions:
+        session_names = [sess.name for sess in sessions]
+        if len(session_names) > 1:
             feat_speaker = FEAT_SPKR_ANNOUNCE.format(speaker.name, 
-                ', '.join([sess.name for sess in sessions]))
+                ', '.join(session_names))
             memcache.set(MEMCACHE_FEAT_SPKR_KEY % (conf), feat_speaker)
         else:
             feat_speaker = ""
@@ -697,7 +698,7 @@ class ConferenceApi(remote.Service):
 
         # generate Profile Key based on user ID and Conference
         # ID based on Profile key get Conference key from ID
-        c_key = ndb.Key(Conference, conf.key.id())
+        c_key = ndb.Key(urlsafe = request.websafeConferenceKey)
         s_id = Session.allocate_ids(size = 1, parent = c_key)[0]
         s_key = ndb.Key(Session, s_id, parent = c_key)
         data['key'] = s_key
@@ -716,12 +717,13 @@ class ConferenceApi(remote.Service):
             name = 'getSessions')
     def getConferenceSessions(self, request):
         """Return sessions associated with websafeConferenceKey."""
-        conf = ndb.Key(urlsafe = request.websafeConferenceKey).get()
-        if not conf:
+        try:
+            conf = ndb.Key(urlsafe = request.websafeConferenceKey).get()
+        except:
             raise endpoints.NotFoundException(
                 'No conference found with key: %s' % request.websafeConferenceKey)
         
-        sessions = Session.query(ancestor = ndb.Key(Conference, conf.key.id()))
+        sessions = Session.query(ancestor = ndb.Key(urlsafe = request.websafeConferenceKey))
         
         # return set of SessionForm objects
         return SessionForms(items = [self._copySessionToForm(sess) for sess in sessions])
@@ -734,13 +736,14 @@ class ConferenceApi(remote.Service):
             name = 'getSessionsByType')
     def getConferenceSessionsByType(self, request):
         """Return sessions in specified conference with specified type."""
-        conf = ndb.Key(urlsafe = request.websafeConferenceKey).get()
-        if not conf:
+        try:
+            conf = ndb.Key(urlsafe = request.websafeConferenceKey).get()
+        except:
             raise endpoints.NotFoundException(
                 'No conference found with key: %s' % request.websafeConferenceKey)
         
         sessions = Session.query(Session.typeOfSession == request.typeOfSession,
-                ancestor = ndb.Key(Conference, conf.key.id()))
+                ancestor = ndb.Key(urlsafe = request.websafeConferenceKey))
         
         # return set of SessionForm objects
         return SessionForms(items = [self._copySessionToForm(sess) for sess in sessions])
@@ -753,7 +756,7 @@ class ConferenceApi(remote.Service):
             name = 'getSessionsBySpeaker')
     def getSessionsBySpeaker(self, request):
         """Return sessions with the specified speaker."""
-        s_key = request.websafeSpeakerKey.key()
+        s_key = ndb.Key(urlsafe = request.websafeSpeakerKey)
         sessions = self._getSessionsBySpeaker(s_key)
 
         return SessionForms(items = [self._copySessionToForm(sess) for sess in sessions])
@@ -796,7 +799,7 @@ class ConferenceApi(remote.Service):
         return SpeakerForms(items = [self._copySpeakerToForm(spkr) for spkr in speakers])
 
 
-    @endpoints.method(SessionForm,
+    @endpoints.method(StringMessage,
             StringMessage,
             path = 'addtowishlist',
             http_method = 'POST',
@@ -813,8 +816,9 @@ class ConferenceApi(remote.Service):
             raise endpoints.NotFoundException("User profile not found")
         
         wishlist = getattr(profile, "sessionWishlist")
-        if request.websafeKey not in wishlist:
-            wishlist.append(request.websafeKey)
+        s_key = ndb.Key(urlsafe = request.data)
+        if s_key not in wishlist:
+            wishlist.append(s_key)
         
         profile.sessionWishlist = wishlist
         profile.put()
@@ -839,11 +843,7 @@ class ConferenceApi(remote.Service):
             raise endpoints.NotFoundException("User profile not found")
         
         wishlist = getattr(profile, "sessionWishlist")
-        
-        s_keys = [ndb.Key(urlsafe = s_key) for s_key in wishlist]
-        sessions = ndb.get_multi(s_keys)
-        
-        print repr(s_keys)
+        sessions = ndb.get_multi(wishlist)
         
         return SessionForms(items = [self._copySessionToForm(sess) for sess in sessions])
 
@@ -861,7 +861,13 @@ class ConferenceApi(remote.Service):
         
         for s_key in s_keys:
             sessions = self._getSessionsBySpeaker(s_key)
+            
+            # loop through sessions and add each one's conference to confs
+            # set prevents duplicates
             confs = set(sess.key.parent() for sess in sessions)
+            
+            # only need 2 confs to be prolific speaker. Add the name and
+            # fall through to next speaker.
             if len(confs) > 1:
                 prolific.add(s_key.get().name)
                 continue
@@ -887,4 +893,4 @@ api = endpoints.api_server([ConferenceApi]) # register API
 
 
 
-# ahRkZXZ-dWRhY2l0eS1zY2FsYWJsZXIuCxIHUHJvZmlsZSIRdG1hbmdhbkBnbWFpbC5jb20MCxIKQ29uZmVyZW5jZRgBDA
+# ahRkZXZ-dWRhY2l0eS1zY2FsYWJsZXIwCxIHUHJvZmlsZSIRdG1hbmdhbkBnbWFpbC5jb20MCxIKQ29uZmVyZW5jZRj50gEM
